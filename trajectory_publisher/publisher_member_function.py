@@ -14,62 +14,95 @@
 
 from os import POSIX_FADV_SEQUENTIAL
 import rclpy
-import numpy as np
-import pandas as pd
-
 from rclpy.node import Node
 
-from std_msgs.msg import String
-from geometry_msgs.msg import Pose
+import numpy as np
+import pandas as pd
+import casadi as cs
+
+from nav_msgs.msg import Odometry
 
 
 
 
-
-class MinimalPublisher(Node):
+class TrajectoryPublisher(Node):
 
 
     def euler_to_quaternion(self, roll, pitch, yaw):
+        """
+        Transforms a set of euler angles (phi,theta,psi) into quaternions.
+        """
 
-            qx = np.sin(roll/2) * np.cos(pitch/2) * np.cos(yaw/2) - np.cos(roll/2) * np.sin(pitch/2) * np.sin(yaw/2)
-            qy = np.cos(roll/2) * np.sin(pitch/2) * np.cos(yaw/2) + np.sin(roll/2) * np.cos(pitch/2) * np.sin(yaw/2)
-            qz = np.cos(roll/2) * np.cos(pitch/2) * np.sin(yaw/2) - np.sin(roll/2) * np.sin(pitch/2) * np.cos(yaw/2)
-            qw = np.cos(roll/2) * np.cos(pitch/2) * np.cos(yaw/2) + np.sin(roll/2) * np.sin(pitch/2) * np.sin(yaw/2)
+        qx = np.sin(roll/2) * np.cos(pitch/2) * np.cos(yaw/2) - np.cos(roll/2) * np.sin(pitch/2) * np.sin(yaw/2)
+        qy = np.cos(roll/2) * np.sin(pitch/2) * np.cos(yaw/2) + np.sin(roll/2) * np.cos(pitch/2) * np.sin(yaw/2)
+        qz = np.cos(roll/2) * np.cos(pitch/2) * np.sin(yaw/2) - np.sin(roll/2) * np.sin(pitch/2) * np.cos(yaw/2)
+        qw = np.cos(roll/2) * np.cos(pitch/2) * np.cos(yaw/2) + np.sin(roll/2) * np.sin(pitch/2) * np.sin(yaw/2)
 
-            return [qx, qy, qz, qw]
+        return np.array([qw, qx, qy, qz])
+
+    def unit_quat(self,q):
+        """
+        Normalizes a quaternion to be unit modulus.
+        :param q: 4-dimensional numpy array or CasADi object
+        :return: the unit quaternion in the same data format as the original one
+        """
+
+        if isinstance(q, np.ndarray):
+            # if (q == np.zeros(4)).all():
+            #     q = np.array([1, 0, 0, 0])
+            q_norm = np.sqrt(np.sum(q ** 2))
+        else:
+            q_norm = cs.sqrt(cs.sumsqr(q))
+        return 1 / q_norm * q
 
     def __init__(self):
         super().__init__('minimal_publisher')
-        self.publisher_ = self.create_publisher(Pose, 'pose', 10)
-        timer_period = 0.5  # seconds
+        self.publisher_ = self.create_publisher(Odometry, 'odometry', 10)
+        timer_period = 2  # seconds
         self.timer = self.create_timer(timer_period, self.timer_callback)
-        self.df = pd.read_csv('/home/elie/colcon_ws/src/trajectory_publisher/trajectory_publisher/traj.csv',delimiter=',',index_col=False)
-        self.get_logger().debug('Read the .csv file')
+        self.df = pd.read_csv('/home/elie/ros_ws/src/trajectory_publisher/trajectory_publisher/traj.csv',delimiter=',',index_col=False)
+        self.get_logger().info('Read the .csv file')
         self.i = 0
 
 
 
     def timer_callback(self):
-        self.get_logger().debug('Callback function intiated')
-        pos = Pose()
+        self.get_logger().info('Callback function initiated')
+        
         if not self.df.empty:
-            row = self.df.loc[0] # taking the first row of data
             
-            # storing the linear position data in the Pose message
-            pos.position.x = row.x
-            pos.position.y = row.y
-            pos.position.z = row.z
+            # Taking the first row of data
+            row = self.df.loc[0] 
 
-            # Finding and storing the angular position data in the Pose message
+            # Declaring the variable of type nav_msgs/odometry (the odometry message)
+            msg = Odometry()
+
+            # Adding a time stamp and a frame ID to the odometry message
+            msg.header.stamp = self._clock.now().to_msg()
+            msg.header.frame_id = "desired trajectory"
+            
+            # storing the linear position data in the odometry message
+            msg.pose.pose.position.x = row.x
+            msg.pose.pose.position.y = row.y
+            msg.pose.pose.position.z = row.z
+
+            # Finding and storing the angular position data in the odometry message
             q = self.euler_to_quaternion(0.0,0.0,row.psi)
-            pos.orientation.x = q[0]
-            pos.orientation.y = q[1]
-            pos.orientation.z = q[2]
-            pos.orientation.w = q[3]
+            self.get_logger().info('The value of q is:')
+            self.get_logger().info(f'qw = {q[0]}, qx = {q[1]}, qy = {q[2]}, qz = {q[3]}')
+            
+            # normalizing the quaternion
+            q = self.unit_quat(q)
 
-            self.publisher_.publish(pos)
+            # storing the quaternion in the odometry message
+            msg.pose.pose.orientation.w = q[0]
+            msg.pose.pose.orientation.x = q[1]
+            msg.pose.pose.orientation.y = q[2]
+            msg.pose.pose.orientation.z = q[3]
+
+            # publishing the odometry message
+            self.publisher_.publish(msg)
             self.get_logger().info('Publishing..............: "%s"' % self.i)
-            #self.get_logger().info( pos.position.x )
             
             self.df.drop(self.df.index[0], inplace=True) # deleting the row from the dataset 
             self.df = self.df.reset_index(drop = True) # resetting the indices
@@ -80,19 +113,17 @@ class MinimalPublisher(Node):
 
 
 
-
-
 def main(args=None):
     rclpy.init(args=args)
-    minimal_publisher = MinimalPublisher()
+    trajectory_publisher = TrajectoryPublisher()
 
-    rclpy.spin(minimal_publisher)
-    minimal_publisher.get_logger().info('Shutting down node!')
+    rclpy.spin(trajectory_publisher)
+    trajectory_publisher.get_logger().info('Shutting down node!')
 
     # Destroy the node explicitly
     # (optional - otherwise it will be done automatically
     # when the garbage collector destroys the node object)
-    minimal_publisher.destroy_node()
+    trajectory_publisher.destroy_node()
     rclpy.shutdown()
 
 
