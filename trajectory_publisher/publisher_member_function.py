@@ -57,10 +57,10 @@ class TrajectoryPublisher(Node):
 
     def __init__(self):
         super().__init__('traj_pub')
-        self.publisher_ = self.create_publisher(Odometry, 'odometry', 10)
-        timer_period = 0.5 # seconds
+        self.publisher_ = self.create_publisher(Odometry, 'desired_pose', 10)
+        timer_period = 0.1 # seconds
         self.timer = self.create_timer(timer_period, self.timer_callback)
-        self.df = pd.read_csv('/home/elie/ros_ws/src/trajectory_publisher/trajectory_publisher/traj.csv',delimiter=',',index_col=False)
+        self.df = pd.read_csv('/home/elie/ros_ws/src/trajectory_publisher/trajectory_publisher/measX.csv',delimiter=',',index_col=False)
         self.get_logger().info('Read the .csv file')
         self.i = 0
 
@@ -74,33 +74,46 @@ class TrajectoryPublisher(Node):
             # Taking the first row of data
             row = self.df.loc[0] 
 
-            # Declaring the variable of type nav_msgs/odometry (the odometry message)
+            # Declaring the variable of type nav_msgs/odometry (the desired pose message)
             msg = Odometry()
 
-            # Adding a time stamp and a frame ID to the odometry message
+            # Adding a time stamp and a frame ID to the desired pose message
             msg.header.stamp = self._clock.now().to_msg()
             msg.header.frame_id = "desired trajectory"
             
-            # storing the linear position data in the odometry message
-            msg.pose.pose.position.x = row.x
+            # storing the linear position data in the desired pose message
+            msg.pose.pose.position.x = 0.0
             msg.pose.pose.position.y = row.y
             msg.pose.pose.position.z = row.z
 
-            # Finding and storing the angular position data in the odometry message
-            q = self.euler_to_quaternion(0.0,0.0,row.psi)
-            self.get_logger().info('The value of q is:')
-            self.get_logger().info(f'qw = {q[0]}, qx = {q[1]}, qy = {q[2]}, qz = {q[3]}')
+            # Finding and storing the angular position data in the desired pose message
+            q = self.euler_to_quaternion(row.phi,0.0,0.0)
             
             # normalizing the quaternion
             q = self.unit_quat(q)
 
-            # storing the quaternion in the odometry message
+            self.get_logger().info('The value of q is:')
+            self.get_logger().info(f'qw = {q[0]}, qx = {q[1]}, qy = {q[2]}, qz = {q[3]}')
+            
+            
+
+            # storing the quaternion in the desired pose message
             msg.pose.pose.orientation.w = q[0]
             msg.pose.pose.orientation.x = q[1]
             msg.pose.pose.orientation.y = q[2]
             msg.pose.pose.orientation.z = q[3]
 
-            # publishing the odometry message
+            # storing the linear twist in the desired pose message
+            msg._twist._twist._linear._x = 0.0
+            msg._twist._twist._linear._y = row.vy
+            msg._twist._twist._linear._z = row.vz
+
+            # storing the angular twist in the desired pose message
+            msg._twist._twist._angular._x = row.phi_dot
+            msg._twist._twist._angular._y = 0.0
+            msg._twist._twist._angular._z = 0.0
+
+            # publishing the desired pose message
             self.publisher_.publish(msg)
             self.get_logger().info('Publishing..............: "%s"' % self.i)
             
